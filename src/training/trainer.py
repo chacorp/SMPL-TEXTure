@@ -22,6 +22,7 @@ from src.stable_diffusion_depth import StableDiffusion
 from src.training.views_dataset import ViewsDataset, MultiviewDataset
 from src.utils import make_path, tensor2numpy
 
+import torchvision.transforms as TF
 
 class TEXTure:
     def __init__(self, cfg: TrainConfig):
@@ -39,7 +40,6 @@ class TEXTure:
         self.final_renders_path = make_path(self.exp_path / 'results')
 
         self.init_logger()
-        pyrallis.dump(self.cfg, (self.exp_path / 'config.yaml').open('w'))
 
         self.view_dirs = ['front', 'left', 'back', 'right', 'overhead', 'bottom']
         self.mesh_model = self.init_mesh_model()
@@ -47,20 +47,45 @@ class TEXTure:
         self.text_z, self.text_string = self.calc_text_embeddings()
         self.dataloaders = self.init_dataloaders()
         self.back_im = torch.Tensor(np.array(Image.open(self.cfg.guide.background_img).convert('RGB'))).to(
-            self.device).permute(2, 0,
-                                 1) / 255.0
-
+            self.device).permute(2, 0, 1) / 255.0
+        
+        self.transform = TF.Compose([
+                TF.ToTensor(),
+                TF.Resize((self.cfg.render.train_grid_size, self.cfg.render.train_grid_size))
+            ])
+        ### reference image
+        # self.ref_image, self.ref_image_tensor, self.ref_image_embeds = self.get_image()
+        self.ref_image, self.ref_image_tensor = self.get_image()
+        
+        self.cfg.guide.dy = self.cfg.guide.dy.tolist()
+        pyrallis.dump(self.cfg, (self.exp_path / 'config.yaml').open('w'))
         logger.info(f'Successfully initialized {self.cfg.log.exp_name}')
-
+    
+    def get_image(self) -> torch.Tensor:
+        image = Image.open(self.cfg.guide.image)
+        image_tensor = self.transform(image)[None].to(self.device)
+        # image_embeds = self.clip_image_embeddings(image)
+        # return image, image_tensor, image_embeds
+        return image, image_tensor
+    
     def init_mesh_model(self) -> nn.Module:
+        ## mesh renderer
         cache_path = Path('cache') / Path(self.cfg.guide.shape_path).stem
         cache_path.mkdir(parents=True, exist_ok=True)
-        model = TexturedMeshModel(self.cfg.guide, device=self.device,
+        model = TexturedMeshModel(self.cfg.guide, 
+                                  device=self.device,
                                   render_grid_size=self.cfg.render.train_grid_size,
                                   cache_path=cache_path,
                                   texture_resolution=self.cfg.guide.texture_resolution,
+                                  initial_texture_path = self.cfg.guide.initial_texture_path,
                                   augmentations=False)
-
+        
+        new_dy = model.mesh.vertices.mean(0).cpu()
+        new_dy[1] = new_dy[1] - 0.1
+        logger.info(f'dy replaced: {self.cfg.guide.dy} -> {new_dy}')
+        self.cfg.guide.dy = new_dy
+        model.dy = new_dy
+        
         model = model.to(self.device)
         logger.info(
             f'Loaded Mesh, #parameters: {sum([p.numel() for p in model.parameters() if p.requires_grad])}')
@@ -92,9 +117,9 @@ class TEXTure:
             for d in self.view_dirs:
                 text = ref_text.format(d)
                 text_string.append(text)
-                logger.info(text)
+                logger.info(f'prompt: {text}')
                 negative_prompt = None
-                logger.info(negative_prompt)
+                logger.info(f'neg prompt: {negative_prompt}')
                 text_z.append(self.diffusion.get_text_embeds([text], negative_prompt=negative_prompt))
         return text_z, text_string
 
@@ -117,6 +142,7 @@ class TEXTure:
         logger.add(self.exp_path / 'log.txt', colorize=False, format=log_format)
 
     def paint(self):
+        ## inference code
         logger.info('Starting training ^_^')
         # Evaluate the initialization
         self.evaluate(self.dataloaders['val'], self.eval_renders_path)
@@ -188,8 +214,15 @@ class TEXTure:
             self.mesh_model.export_mesh(save_path)
 
             logger.info(f"\tDone!")
+            
+    def ref_camera_view(self):
+        theta = np.deg2rad(90)
+        phi   = np.deg2rad(0)
+        radius = 3.5
+        return theta, phi, radius
 
     def paint_viewpoint(self, data: Dict[str, Any]):
+        ### painting texture at each view point
         logger.info(f'--- Painting step #{self.paint_step} ---')
         theta, phi, radius = data['theta'], data['phi'], data['radius']
         # If offset of phi was set from code
@@ -206,13 +239,30 @@ class TEXTure:
                                        mode='bilinear', align_corners=False)
 
         # Render from viewpoint
+        # logger.info(f'Painting from degree: theta: {np.rad2deg(theta)}, phi: {np.rad2deg(phi)}, radius: {radius}')
         outputs = self.mesh_model.render(theta=theta, phi=phi, radius=radius, background=background)
+        # outputs = self.mesh_model.render(theta=np.deg2rad(90).astype(np.float32), phi=np.deg2rad(10).astype(np.float32), radius=4, background=background)
+        """
+        TODO:
+            1. get ref view (assume as given, implement RSC_net later)
+                [v] perspective 
+            2. get render cache from given ref-view:
+                [v] get DensePose mapped texture & mask
+                [-] render cache == [face_normals, uv_features, face_idx, depth_map]
+                [-] depthmap cannot be obtained from DensePose
+                [-] RSC_net
+            3. change renderer -> dib_r 
+        """
+        import pdb;pdb.set_trace()
+        TF.ToPILImage()(outputs['image'][0] * outputs['mask'][0]).save('test.png')
+        TF.ToPILImage()(self.ref_image_tensor[0]).save('test2.png')
+        
+        
         render_cache = outputs['render_cache']
         rgb_render_raw = outputs['image']  # Render where missing values have special color
         depth_render = outputs['depth']
         # Render again with the median value to use as rgb, we shouldn't have color leakage, but just in case
-        outputs = self.mesh_model.render(background=background,
-                                         render_cache=render_cache, use_median=self.paint_step > 1)
+        outputs = self.mesh_model.render(background=background, render_cache=render_cache, use_median=self.paint_step > 1)
         rgb_render = outputs['image']
         # Render meta texture map
         meta_output = self.mesh_model.render(background=torch.Tensor([0, 0, 0]).to(self.device),
@@ -245,6 +295,7 @@ class TEXTure:
                                                                         mask=outputs['mask'])
 
         update_ratio = float(update_mask.sum() / (update_mask.shape[2] * update_mask.shape[3]))
+        
         if self.cfg.guide.reference_texture is not None and update_ratio < 0.01:
             logger.info(f'Update ratio {update_ratio:.5f} is small for an editing step, skipping')
             return
@@ -262,25 +313,27 @@ class TEXTure:
 
         checker_mask = None
         if self.paint_step > 1:
-            checker_mask = self.generate_checkerboard(crop(update_mask), crop(refine_mask),
-                                                      crop(generate_mask))
-            self.log_train_image(F.interpolate(cropped_rgb_render, (512, 512)) * (1 - checker_mask),
-                                 'checkerboard_input')
+            checker_mask = self.generate_checkerboard(crop(update_mask), crop(refine_mask), crop(generate_mask))
+            self.log_train_image(F.interpolate(cropped_rgb_render, (512, 512)) * (1 - checker_mask), 'checkerboard_input')
         self.diffusion.use_inpaint = self.cfg.guide.use_inpainting and self.paint_step > 1
 
         cropped_rgb_output, steps_vis = self.diffusion.img2img_step(text_z, cropped_rgb_render.detach(),
                                                                     cropped_depth_render.detach(),
                                                                     guidance_scale=self.cfg.guide.guidance_scale,
-                                                                    strength=1.0, update_mask=cropped_update_mask,
+                                                                    strength=1.0, 
+                                                                    update_mask=cropped_update_mask,
                                                                     fixed_seed=self.cfg.optim.seed,
                                                                     check_mask=checker_mask,
                                                                     intermediate_vis=self.cfg.log.vis_diffusion_steps)
         self.log_train_image(cropped_rgb_output, name='direct_output')
         self.log_diffusion_steps(steps_vis)
 
-        cropped_rgb_output = F.interpolate(cropped_rgb_output,
-                                           (cropped_rgb_render.shape[2], cropped_rgb_render.shape[3]),
-                                           mode='bilinear', align_corners=False)
+        cropped_rgb_output = F.interpolate(
+            cropped_rgb_output,
+            (cropped_rgb_render.shape[2], cropped_rgb_render.shape[3]),
+            mode='bilinear', 
+            align_corners=False
+        )
 
         # Extend rgb_output to full image size
         rgb_output = rgb_render.clone()
@@ -289,10 +342,16 @@ class TEXTure:
 
         # Project back
         object_mask = outputs['mask']
-        fitted_pred_rgb, _ = self.project_back(render_cache=render_cache, background=background, rgb_output=rgb_output,
-                                               object_mask=object_mask, update_mask=update_mask, z_normals=z_normals,
-                                               z_normals_cache=z_normals_cache)
-        self.log_train_image(fitted_pred_rgb, name='fitted')
+        
+        if self.paint_step > 1:
+            fitted_pred_rgb, _ = self.project_back(render_cache=render_cache, 
+                                                   background=background, 
+                                                   rgb_output=rgb_output,
+                                                   object_mask=object_mask, 
+                                                   update_mask=update_mask, 
+                                                   z_normals=z_normals,
+                                                   z_normals_cache=z_normals_cache)
+            self.log_train_image(fitted_pred_rgb, name='fitted')
 
         return
 
@@ -406,17 +465,22 @@ class TEXTure:
         # Create a checkerboard grid
         checkerboard[:, :, ::2, ::2] = 0
         checkerboard[:, :, 1::2, 1::2] = 0
-        checkerboard = F.interpolate(checkerboard,
-                                     (512, 512))
+        checkerboard = F.interpolate(checkerboard, (512, 512))
         checker_mask = F.interpolate(update_mask_inner, (512, 512))
         only_old_mask = F.interpolate(torch.bitwise_and(improve_z_mask_inner == 1,
                                                         update_mask_base_inner == 0).float(), (512, 512))
         checker_mask[only_old_mask == 1] = checkerboard[only_old_mask == 1]
         return checker_mask
 
-    def project_back(self, render_cache: Dict[str, Any], background: Any, rgb_output: torch.Tensor,
-                     object_mask: torch.Tensor, update_mask: torch.Tensor, z_normals: torch.Tensor,
-                     z_normals_cache: torch.Tensor):
+    def project_back(self, 
+                     render_cache: Dict[str, Any], 
+                     background: Any, 
+                     rgb_output: torch.Tensor,
+                     object_mask: torch.Tensor, 
+                     update_mask: torch.Tensor, 
+                     z_normals: torch.Tensor,
+                     z_normals_cache: torch.Tensor
+                    ):
         object_mask = torch.from_numpy(
             cv2.erode(object_mask[0, 0].detach().cpu().numpy(), np.ones((5, 5), np.uint8))).to(
             object_mask.device).unsqueeze(0).unsqueeze(0)
@@ -444,12 +508,12 @@ class TEXTure:
         # Update the normals
         z_normals_cache[:, 0, :, :] = torch.max(z_normals_cache[:, 0, :, :], z_normals[:, 0, :, :])
 
+        ### optimize texture maps
         optimizer = torch.optim.Adam(self.mesh_model.get_params(), lr=self.cfg.optim.lr, betas=(0.9, 0.99),
                                      eps=1e-15)
         for _ in tqdm(range(200), desc='fitting mesh colors'):
             optimizer.zero_grad()
-            outputs = self.mesh_model.render(background=background,
-                                             render_cache=render_cache)
+            outputs = self.mesh_model.render(background=background, render_cache=render_cache)
             rgb_render = outputs['image']
 
             mask = render_update_mask.flatten()
