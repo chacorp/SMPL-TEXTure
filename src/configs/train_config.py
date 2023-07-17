@@ -12,7 +12,7 @@ class RenderConfig:
     # Grid size of evaluation
     eval_grid_size: int = 1024
     # training camera radius range
-    radius: float = 1.5
+    radius: float = 1.0
     # Set [0,overhead_range] as the overhead region
     overhead_range: float = 40
     # Define the front angle region
@@ -33,6 +33,12 @@ class RenderConfig:
 @dataclass
 class GuideConfig:
     """ Parameters defining the guidance """
+    # Guiding image
+    image: str
+    # initial texture 
+    initial_texture_path: str
+    initial_mask_path: str
+    
     # Guiding text prompt
     text: str
     # The mesh to paint
@@ -48,7 +54,7 @@ class GuideConfig:
     # Scale of mesh in 1x1x1 cube
     shape_scale: float = 0.6
     # height of mesh
-    dy: float = 0.25
+    dy: float = 0.25 ## not used..
     # texture image resolution
     texture_resolution: int = 1024
     # texture mapping interpolation mode from texture image, options: 'nearest', 'bilinear', 'bicubic'
