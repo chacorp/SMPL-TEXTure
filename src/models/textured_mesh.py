@@ -119,7 +119,8 @@ class TexturedMeshModel(nn.Module):
             self.initial_texture_path = self.opt.initial_texture
         self.cache_path = cache_path
         self.num_features = 3
-
+        
+        ### renderer
         self.renderer = Renderer(device=self.device, dim=(render_grid_size, render_grid_size),
                                  interpolation_mode=self.opt.texture_interpolation_mode)
         self.env_sphere, self.mesh = self.init_meshes()
@@ -153,8 +154,7 @@ class TexturedMeshModel(nn.Module):
     def eigens(self, k: int, e: float) -> (torch.Tensor, torch.Tensor):
         if self._eigenvalues is None or self._eigenvectors is None:
             self._eigenvalues, self._eigenvectors = eigen_problem(self.L, k, e)
-            self._eigenvalues, self._eigenvectors = \
-                self._eigenvalues.to(self.device), self._eigenvectors.to(self.device)
+            self._eigenvalues, self._eigenvectors = self._eigenvalues.to(self.device), self._eigenvectors.to(self.device)
 
         return self._eigenvalues, self._eigenvectors
 
@@ -165,6 +165,16 @@ class TexturedMeshModel(nn.Module):
         vertices *= mesh_scale
         vertices[:, 1] += dy
         return vertices
+    
+    @staticmethod
+    def normalize_v(V: torch.Tensor, mesh_scale: float = 1.0, dy: float = 0.0) -> torch.Tensor:
+        V = (V-(V.max(0).values + V.min(0).values) * 0.5)/max(V.max(0).values - V.min(0).values)
+
+        #V = V - V.min(0).values[1]
+        #V = V / V.max(0).values[1]
+        # V = V * 2.0
+        #V = V * 0.8 # rescale
+        return V
 
     def spectral_augmentations(self, vertices: torch.Tensor) -> torch.Tensor:
         eigen_values, basis_functions = self.eigens(self.n_eigen_values, 0.0)
@@ -204,7 +214,9 @@ class TexturedMeshModel(nn.Module):
         env_sphere = Mesh(env_sphere_path, self.device)
 
         mesh = Mesh(self.opt.shape_path, self.device)
-        mesh.normalize_mesh(inplace=True, target_scale=self.mesh_scale, dy=self.dy)
+        # import pdb;pdb.set_trace()
+        mesh.vertices = self.normalize_v(mesh.vertices)
+        # mesh.normalize_mesh(inplace=True, target_scale=self.mesh_scale, dy=self.dy)
 
         return env_sphere, mesh
 
@@ -227,6 +239,13 @@ class TexturedMeshModel(nn.Module):
             texture = torch.ones(1, 3, self.texture_resolution, self.texture_resolution).cuda() * torch.Tensor(
                 self.default_color).reshape(1, 3, 1, 1).cuda()
         texture_img = nn.Parameter(texture)
+        
+        if self.initial_mask_path is not None:
+            self.texture_mask = torch.Tensor(np.array(Image.open(self.initial_mask_path).resize(
+                    (self.texture_resolution, self.texture_resolution)))).permute(2, 0, 1).cuda().unsqueeze(0) / 255.0
+        else:
+            self.texture_mask = torch.ones(1, 3, self.texture_resolution, self.texture_resolution).cuda() * torch.Tensor(
+                self.default_color).reshape(1, 3, 1, 1).cuda()
         return background_sphere_colors, texture_img
 
     def invert_color(self, color: torch.Tensor) -> torch.Tensor:
@@ -257,12 +276,13 @@ class TexturedMeshModel(nn.Module):
         else:
             vt_cache, ft_cache = cache_path / 'vt.pth', cache_path / 'ft.pth'
             cache_exists_flag = vt_cache.exists() and ft_cache.exists()
-
-        if self.mesh.vt is not None and self.mesh.ft is not None \
-                and self.mesh.vt.shape[0] > 0 and self.mesh.ft.min() > -1:
+            
+        # import pdb;pdb.set_trace()
+        if self.mesh.vt is not None and self.mesh.ft is not None and self.mesh.vt.shape[0] > 0 and self.mesh.ft.min() > -1:
             vt = self.mesh.vt.cuda()
             ft = self.mesh.ft.cuda()
-            run_xatlas = not (vt.shape[0] == self.mesh.vertices.shape[0] and ft.shape[0] == self.mesh.faces.shape[0])
+            run_xatlas = False
+            # run_xatlas = not (vt.shape[0] == self.mesh.vertices.shape[0] and ft.shape[0] == self.mesh.faces.shape[0])
         elif cache_exists_flag:
             vt = torch.load(vt_cache).cuda()
             ft = torch.load(ft_cache).cuda()
@@ -355,12 +375,20 @@ class TexturedMeshModel(nn.Module):
             fp.write(f'Ns 0.000000 \n')
             fp.write(f'map_Kd {name}albedo.png \n')
 
-    def render(self, theta=None, phi=None, radius=None, background=None,
-               use_meta_texture=False, render_cache=None, use_median=False, dims=None):
+    def render(self, 
+               theta=None, 
+               phi=None, 
+               radius=None, 
+               background=None,
+               use_meta_texture=False, 
+               render_cache=None, 
+               use_median=False, 
+               dims=None):
         if render_cache is None:
             assert theta is not None and phi is not None and radius is not None
         background_sphere_colors = self.background_sphere_colors[
-            torch.randint(0, self.background_sphere_colors.shape[0], (1,))]
+            torch.randint(0, self.background_sphere_colors.shape[0], (1,))
+        ]
         if use_meta_texture:
             texture_img = self.meta_texture_img
         else:
@@ -392,11 +420,13 @@ class TexturedMeshModel(nn.Module):
                                                                                                      elev=theta,
                                                                                                      azim=phi,
                                                                                                      radius=radius,
-                                                                                                     look_at_height=self.dy,
+                                                                                                     look_at=self.dy,
+                                                                                                     # look_at_height=self.dy,
                                                                                                      render_cache=render_cache,
                                                                                                      dims=dims,
                                                                                                      background_type=background_type)
-
+        # import pdb;pdb.set_trace()
+        
         mask = mask.detach()
 
         if use_render_back:
@@ -410,7 +440,9 @@ class TexturedMeshModel(nn.Module):
                                                                    azim=phi,
                                                                    radius=radius,
                                                                    dims=dims,
-                                                                   look_at_height=self.dy, calc_depth=False)
+                                                                   look_at=self.dy, 
+                                                                   # look_at_height=self.dy, 
+                                                                   calc_depth=False)
             elif len(background.shape) == 1:
                 pred_back = torch.ones_like(pred_features) * background.reshape(1, 3, 1, 1)
             else:
@@ -435,6 +467,7 @@ class TexturedMeshModel(nn.Module):
                                                                      elev=theta,
                                                                      azim=phi,
                                                                      radius=radius,
-                                                                     look_at_height=self.dy)
+                                                                     look_at=self.dy)
+                                                                     # look_at_height=self.dy)
         unique_face_idx = torch.unique(face_idx)
         print('')
