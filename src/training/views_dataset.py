@@ -9,8 +9,17 @@ from src.utils import get_view_direction
 from loguru import logger
 
 
-def rand_poses(size, device, radius_range=(1.0, 1.5), theta_range=(0.0, 150.0), phi_range=(0.0, 360.0),
-               angle_overhead=30.0, angle_front=60.0, biased_angles=True):
+def rand_poses(
+    size, 
+    device, 
+    # radius_range=(1.0, 1.5), 
+    radius_range   = (0.8, 1.2),
+    theta_range    = (0.0, 150.0), 
+    phi_range      = (0.0, 360.0),
+    angle_overhead = 30.0, 
+    angle_front    = 60.0, 
+    biased_angles  = True
+):
     if theta_range != (0.0, 180.0):
         warnings.warn("theta_range is not (0.0, 180.0) in rand_poses\n Will use (0.0, 180.0) instead")
 
