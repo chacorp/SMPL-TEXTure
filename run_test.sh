@@ -1,0 +1,1 @@
+python -m scripts.run_texture --config_path=configs/text_guided/smpl.yaml
