@@ -13,7 +13,8 @@ def rand_poses(
     size, 
     device, 
     # radius_range=(1.0, 1.5), 
-    radius_range   = (0.8, 1.2),
+    # radius_range   = (0.8, 1.2),
+    radius_range   = (3.3, 3.7),
     theta_range    = (0.0, 150.0), 
     phi_range      = (0.0, 360.0),
     angle_overhead = 30.0, 
@@ -172,7 +173,7 @@ class ViewsDataset:
     def collate(self, index):
         # circle pose
         phi = (index[0] / self.size) * 360
-        dirs, thetas, phis, radius = circle_poses(self.device, radius=self.cfg.radius * 1.2, theta=self.cfg.base_theta,
+        dirs, thetas, phis, radius = circle_poses(self.device, radius=self.cfg.radius, theta=self.cfg.base_theta,
                                                   phi=phi,
                                                   angle_overhead=self.cfg.overhead_range,
                                                   angle_front=self.cfg.front_range)
