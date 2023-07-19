@@ -100,6 +100,7 @@ class TexturedMeshModel(nn.Module):
                  render_grid_size=1024,
                  texture_resolution=1024,
                  initial_texture_path=None,
+                 initial_mask_path=None,
                  cache_path=None,
                  device=torch.device('cpu'),
                  augmentations=False,
@@ -113,10 +114,10 @@ class TexturedMeshModel(nn.Module):
         self.dy = self.opt.dy
         self.mesh_scale = self.opt.shape_scale
         self.texture_resolution = texture_resolution
-        if initial_texture_path is not None:
-            self.initial_texture_path = initial_texture_path
-        else:
-            self.initial_texture_path = self.opt.initial_texture
+        
+        self.initial_texture_path = self.opt.initial_texture_path
+        self.initial_mask_path = self.opt.initial_mask_path
+            
         self.cache_path = cache_path
         self.num_features = 3
         
@@ -233,19 +234,22 @@ class TexturedMeshModel(nn.Module):
         background_sphere_colors = nn.Parameter(modulated_init_background_bases_latent.cuda())
 
         if self.initial_texture_path is not None:
-            texture = torch.Tensor(np.array(Image.open(self.initial_texture_path).resize(
-                (self.texture_resolution, self.texture_resolution)))).permute(2, 0, 1).cuda().unsqueeze(0) / 255.0
+        # if False:
+            texture = torch.Tensor(np.array(Image.open(self.initial_texture_path).resize((self.texture_resolution, self.texture_resolution)))).permute(2, 0, 1).cuda().unsqueeze(0) / 255.0
         else:
-            texture = torch.ones(1, 3, self.texture_resolution, self.texture_resolution).cuda() * torch.Tensor(
-                self.default_color).reshape(1, 3, 1, 1).cuda()
-        texture_img = nn.Parameter(texture)
+            texture = torch.ones(1, 3, self.texture_resolution, self.texture_resolution).cuda() * torch.Tensor(self.default_color).reshape(1, 3, 1, 1).cuda()
         
-        if self.initial_mask_path is not None:
-            self.texture_mask = torch.Tensor(np.array(Image.open(self.initial_mask_path).resize(
-                    (self.texture_resolution, self.texture_resolution)))).permute(2, 0, 1).cuda().unsqueeze(0) / 255.0
+        if self.initial_mask_path is not None and self.initial_texture_path is not None:
+        # if False:
+            res = self.texture_resolution
+            self.init_mask = torch.Tensor(np.array(Image.open(self.initial_mask_path).resize((res, res))))[..., None].permute(2, 0, 1).cuda().unsqueeze(0) / 255.0
+            self.init_mask[self.init_mask > 0] = 1.0 ## hard mask
+            texture = self.init_mask * texture + (1-self.init_mask) * torch.Tensor(self.default_color).reshape(1, 3, 1, 1).cuda()
         else:
-            self.texture_mask = torch.ones(1, 3, self.texture_resolution, self.texture_resolution).cuda() * torch.Tensor(
-                self.default_color).reshape(1, 3, 1, 1).cuda()
+            self.init_mask = torch.ones(1, 1, self.texture_resolution, self.texture_resolution).cuda()
+            
+        # import pdb;pdb.set_trace()
+        texture_img = nn.Parameter(texture)
         return background_sphere_colors, texture_img
 
     def invert_color(self, color: torch.Tensor) -> torch.Tensor:
@@ -316,6 +320,9 @@ class TexturedMeshModel(nn.Module):
 
     def get_params(self):
         return [self.background_sphere_colors, self.texture_img, self.meta_texture_img]
+    
+    def get_meta_params(self):
+        return [self.background_sphere_colors, self.meta_texture_img]
 
     @torch.no_grad()
     def export_mesh(self, path):
@@ -381,6 +388,7 @@ class TexturedMeshModel(nn.Module):
                radius=None, 
                background=None,
                use_meta_texture=False, 
+               use_init_mask=False, 
                render_cache=None, 
                use_median=False, 
                dims=None):
@@ -393,19 +401,21 @@ class TexturedMeshModel(nn.Module):
             texture_img = self.meta_texture_img
         else:
             texture_img = self.texture_img
-
+        
+        if use_init_mask:
+            texture_img = self.init_mask
+            
+        ### for diffusion finetuning
         if self.augmentations:
             augmented_vertices = self.augment_vertices()
         else:
             augmented_vertices = self.mesh.vertices
 
         if use_median:
-            diff = (texture_img - torch.tensor(self.default_color).view(1, 3, 1, 1).to(
-                self.device)).abs().sum(axis=1)
+            diff = (texture_img - torch.tensor(self.default_color).view(1, 3, 1, 1).to(self.device)).abs().sum(axis=1)
             default_mask = (diff < 0.1).float().unsqueeze(0)
-            median_color = texture_img[0, :].reshape(3, -1)[:, default_mask.flatten() == 0].mean(
-                axis=1)
-            texture_img = texture_img.clone()
+            median_color = texture_img[0, :].reshape(3, -1)[:, default_mask.flatten() == 0].mean(axis=1)
+            texture_img  = texture_img.clone()
             with torch.no_grad():
                 texture_img.reshape(3, -1)[:, default_mask.flatten() == 1] = median_color.reshape(-1, 1)
         background_type = 'none'
@@ -426,6 +436,8 @@ class TexturedMeshModel(nn.Module):
                                                                                                      dims=dims,
                                                                                                      background_type=background_type)
         # import pdb;pdb.set_trace()
+        if use_init_mask:
+            return {'init_mask': pred_features}
         
         mask = mask.detach()
 
