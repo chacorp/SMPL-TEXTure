@@ -9,7 +9,7 @@ class Renderer:
         assert interpolation_mode in ['nearest', 'bilinear', 'bicubic'], f'no interpolation mode {interpolation_mode}'
 
         # camera = kal.render.camera.generate_perspective_projection(np.pi / 3).to(device)
-        camera = kal.render.camera.generate_perspective_projection(np.pi / 9).to(device)
+        camera = kal.render.camera.generate_perspective_projection(np.pi / 9).to(device) ## 20 degree
 
         self.device = device
         self.interpolation_mode = interpolation_mode
@@ -106,19 +106,19 @@ class Renderer:
             ## render cache: face_normals, uv_features, face_idx, depth_map
             """
             requirements for render cache:
-                camera_transform
-                
+                camera_transform                
             """
             camera_transform = self.get_camera_from_view(
                 torch.tensor(elev), 
                 torch.tensor(azim), 
                 r=radius,
-                look_at=look_at
+                look_at=look_at,
                 # look_at_height=look_at_height
             ).to(self.device)
             
             face_vertices_camera, face_vertices_image, face_normals = kal.render.mesh.prepare_vertices(
-                verts.to(self.device), faces.to(self.device), self.camera_projection, camera_transform=camera_transform)
+                verts.to(self.device), faces.to(self.device), self.camera_projection, camera_transform=camera_transform
+            )
 
             depth_map, _ = kal.render.mesh.rasterize(
                 dims[1], dims[0], face_vertices_camera[:, :, :, -1], face_vertices_image, face_vertices_camera[:, :, :, -1:])
