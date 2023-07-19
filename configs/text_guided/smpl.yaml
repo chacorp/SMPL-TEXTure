@@ -5,7 +5,7 @@ guide:
   image: "input/rp_aaron_posed_005_render.png"
   initial_texture_path: "input/rp_aaron_posed_005_base.png"
   initial_mask_path: "input/rp_aaron_posed_005_mask_base.png"
-  text: "a photo of a single person posing and wearing a t-shirt and short pants, full body, white background, {} view"
+  text: "a photo of a single person posing and wearing a t-shirt and short pants, full body, {} view"
   # diffusion_name: stabilityai/stable-diffusion-2-depth
   diffusion_name: '/source/kseo/huggingface_cache/models--stabilityai--stable-diffusion-2-depth/snapshots/d41a0687231847e8bd55f43fb1f576afaeefef19'
   shape_scale: 0.6
