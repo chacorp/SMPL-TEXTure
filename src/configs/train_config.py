@@ -12,7 +12,8 @@ class RenderConfig:
     # Grid size of evaluation
     eval_grid_size: int = 1024
     # training camera radius range
-    radius: float = 1.0
+    # radius: float = 1.0
+    radius: float = 3.5
     # Set [0,overhead_range] as the overhead region
     overhead_range: float = 40
     # Define the front angle region
@@ -22,7 +23,7 @@ class RenderConfig:
     # Number of views to use
     n_views: int = 8
     # Theta value for rendering during training
-    base_theta:float = 60
+    base_theta:float = 80
     # Additional views to use before rotating around shape
     views_before: List[Tuple[float,float]] = field(default_factory=list)
     # Additional views to use after rotating around shape
