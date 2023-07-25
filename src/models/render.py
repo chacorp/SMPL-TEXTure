@@ -33,6 +33,19 @@ class Renderer:
         camera_proj = kal.render.camera.generate_transformation_matrix(pos, look_at, direction)
         return camera_proj
 
+    @staticmethod
+    def get_camera_from_position(position=torch.tensor([0.0, 0.0, 0.0]), 
+                                 look_at=torch.tensor([0.0, 0.0, 0.0])
+                                ):
+
+        pos = position.unsqueeze(0)
+        # look_at = torch.zeros_like(pos)
+        # look_at[:, 1] = look_at_height
+        ### look_at  = mesh center
+        direction = torch.tensor([0.0, 1.0, 0.0]).unsqueeze(0)
+
+        camera_proj = kal.render.camera.generate_transformation_matrix(pos, look_at, direction)
+        return camera_proj
 
     def normalize_depth(self, depth_map):
         assert depth_map.max() <= 0.0, 'depth map should be negative'
@@ -57,12 +70,17 @@ class Renderer:
                            look_at=torch.tensor([0.0, 0.0, 0.0]), 
                            calc_depth=True, 
                            dims=None, 
-                           background_type='none'
+                           background_type='none',
+                           render_face=False,
                           ):
     # def render_single_view(self, mesh, face_attributes, elev=0, azim=0, radius=2, look_at_height=0.0,calc_depth=True,dims=None, background_type='none'):    
         dims = self.dim if dims is None else dims
 
-        camera_transform = self.get_camera_from_view(torch.tensor(elev), torch.tensor(azim), r=radius, look_at=look_at).to(self.device)
+        if render_face:            
+            # camera_transform = self.get_camera_from_position(position= , look_at=look_at).to(self.device)
+            camera_transform = self.get_camera_from_view(torch.tensor(elev), torch.tensor(azim), r=radius, look_at=look_at).to(self.device)
+        else:
+            camera_transform = self.get_camera_from_view(torch.tensor(elev), torch.tensor(azim), r=radius, look_at=look_at).to(self.device)
         # camera_transform = self.get_camera_from_view(torch.tensor(elev), torch.tensor(azim), r=radius, look_at_height=look_at_height).to(self.device)
         
         face_vertices_camera, face_vertices_image, face_normals = kal.render.mesh.prepare_vertices(
@@ -98,7 +116,9 @@ class Renderer:
                                    look_at=torch.tensor([0.0, 0.0, 0.0]), 
                                    dims=None, 
                                    background_type='none', 
-                                   render_cache=None):
+                                   render_cache=None,
+                                   render_face=False,
+                                  ):
     # def render_single_view_texture(self, verts, faces, uv_face_attr, texture_map, elev=0, azim=0, radius=2, look_at_height=0.0, dims=None, background_type='none', render_cache=None):
         dims = self.dim if dims is None else dims
 
@@ -108,13 +128,19 @@ class Renderer:
             requirements for render cache:
                 camera_transform                
             """
-            camera_transform = self.get_camera_from_view(
-                torch.tensor(elev), 
-                torch.tensor(azim), 
-                r=radius,
-                look_at=look_at,
-                # look_at_height=look_at_height
-            ).to(self.device)
+
+            if render_face:
+                import pdb;pdb.set_trace()
+                # camera_transform = self.get_camera_from_position(position= , look_at=look_at).to(self.device)
+                camera_transform = self.get_camera_from_view(torch.tensor(elev), torch.tensor(azim), r=radius, look_at=look_at).to(self.device)
+            else:
+                camera_transform = self.get_camera_from_view(
+                    torch.tensor(elev), 
+                    torch.tensor(azim), 
+                    r=radius,
+                    look_at=look_at,
+                    # look_at_height=look_at_height
+                ).to(self.device)
             
             face_vertices_camera, face_vertices_image, face_normals = kal.render.mesh.prepare_vertices(
                 verts.to(self.device), faces.to(self.device), self.camera_projection, camera_transform=camera_transform
@@ -143,7 +169,7 @@ class Renderer:
 
         normals_image = face_normals[0][face_idx, :]
 
-        render_cache = {'uv_features':uv_features, 'face_normals':face_normals,'face_idx':face_idx, 'depth_map':depth_map}
+        render_cache = {'uv_features':uv_features, 'face_normals':face_normals, 'face_idx':face_idx, 'depth_map':depth_map}
 
         return image_features.permute(0, 3, 1, 2), mask.permute(0, 3, 1, 2),\
                depth_map.permute(0, 3, 1, 2), normals_image.permute(0, 3, 1, 2), render_cache
