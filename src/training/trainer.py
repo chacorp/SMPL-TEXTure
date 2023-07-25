@@ -33,10 +33,10 @@ class TEXTure:
         utils.seed_everything(self.cfg.optim.seed)
 
         # Make view_dirs
-        self.exp_path = make_path(self.cfg.log.exp_dir)
+        self.exp_path  = make_path(self.cfg.log.exp_dir)
         self.ckpt_path = make_path(self.exp_path / 'checkpoints')
         self.train_renders_path = make_path(self.exp_path / 'vis' / 'train')
-        self.eval_renders_path = make_path(self.exp_path / 'vis' / 'eval')
+        self.eval_renders_path  = make_path(self.exp_path / 'vis' / 'eval')
         self.final_renders_path = make_path(self.exp_path / 'results')
 
         self.init_logger()
@@ -270,7 +270,7 @@ class TEXTure:
                 [v] no project_back -> no update? 
                     if inital_texture is 0, no gradient flows!
                     
-                [-] how to manage view coherent texture -> masking too much? modify tri-map mask
+                [-] how to manage view coherent texture -> masking too much? modify calculate_trimap()
                 
             3. change renderer -> dib_r 
         """
@@ -412,17 +412,41 @@ class TEXTure:
                          z_normals: torch.Tensor, 
                          z_normals_cache: torch.Tensor, 
                          edited_mask: torch.Tensor,
-                         mask: torch.Tensor):
+                         mask: torch.Tensor
+                        ):
+        """
+        Args
+            rgb_render_raw (torch.tensor): rendered image with generated texture                [B, 3, H, W]
+            depth_render (torch.tensor): depth image of SMPL model                              [B, 1, H, W]
+            z_normals (torch.tensor): rendered image of normal with camera                      [B, 1, H, W]
+            z_normals_cache (torch.tensor): rendered image of prev normal only R is used        [B, 3, H, W]
+            edited_mask (torch.tensor): rendered image of normal with camera                    [B, 1, H, W]
+            mask (torch.tensor): rendered image of visibile face of the mesh                    [B, 1, H, W]
+        Return
+            update_mask (torch.tensor): mask for update :: 'generate_mask' + 'refine_mask' (no mask in 1st iter)
+            generate_mask (torch.tensor): dilated from 'exact_generate_mask'
+            refine_mask (torch.tensor): mask for refinement, used for checkerboard?
+        """
+        
         diff = (rgb_render_raw.detach() - torch.tensor(self.mesh_model.default_color).view(1, 3, 1, 1).to(
             self.device)).abs().sum(axis=1)
         # exact_generate_mask = (diff < 0.1).float().unsqueeze(0)
         exact_generate_mask = ((diff < 0.1).float() * mask)
+        ### literally the exact mask for generated texture map
         
         # import pdb;pdb.set_trace()
         # TF.ToPILImage()(exact_generate_mask[0]).save('test.png')
         # TF.ToPILImage()(diff).save('test.png')
         # TF.ToPILImage()(mask[0]).save('test.png')
         # TF.ToPILImage()(((diff < 0.1).float() * mask)[0]).save('test.png')
+        # TF.ToPILImage()(depth_render[0]).save('test_depth_render.png')
+        # TF.ToPILImage()(z_normals[0]).save('test_z_normals.png') z_normals_cache
+        # TF.ToPILImage()(z_normals_cache[0]).save('test_z_normals_cache.png')
+        # TF.ToPILImage()(edited_mask[0]).save('test_edited_mask.png')
+        # TF.ToPILImage()(update_mask[0]).save('test_update_mask.png')
+        # TF.ToPILImage()(refine_mask[0]).save('test_refine_mask.png')
+        
+        
         
         # Extend mask
         generate_mask = torch.from_numpy(
@@ -475,6 +499,8 @@ class TEXTure:
         update_mask[refine_mask == 1] = 1
 
         update_mask[torch.bitwise_and(object_mask == 0, generate_mask == 0)] = 0
+        
+        # import pdb;pdb.set_trace()
 
         # Visualize trimap
         if self.cfg.log.log_images:
@@ -501,7 +527,17 @@ class TEXTure:
 
         return update_mask, generate_mask, refine_mask
 
-    def generate_checkerboard(self, update_mask_inner, improve_z_mask_inner, update_mask_base_inner):
+    def generate_checkerboard(self, 
+                              update_mask_inner, 
+                              improve_z_mask_inner, 
+                              update_mask_base_inner
+                             ):
+        """
+        Args
+            update_mask_inner: update
+            improve_z_mask_inner: refine
+            update_mask_base_inner: generate
+        """
         checkerboard  = torch.ones((1, 1, 64 // 2, 64 // 2)).to(self.device)
         # Create a checkerboard grid
         checkerboard[:, :, ::2, ::2] = 0
@@ -532,7 +568,7 @@ class TEXTure:
             background (torch.Tensor): bg color
             rgb_output (torch.Tensor): diffused image [B, 3, H, W]
             object_mask (torch.Tensor):
-            update_mask (torch.Tensor):
+            update_mask (torch.Tensor): 'refine_mask' + 'generate_mask'
             z_normals (torch.Tensor):
             z_normals_cache (torch.Tensor):
         """
